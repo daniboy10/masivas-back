@@ -1,59 +1,110 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Masivas Back (Laravel)
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Backend desarrollado en Laravel para una prueba técnica.
+Incluye lógica de base de datos mediante Stored Procedures en MySQL.
 
-## About Laravel
+Requisitos:
+- PHP 8.4+
+- Composer
+- MySQL / MariaDB
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+Instalación local:
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+git clone https://github.com/daniboy10/masivas-back.git
+cd masivas-back
+composer install
+cp .env.example .env
+php artisan key:generate
+php artisan migrate
+php artisan serve
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+Stored Procedures utilizados en la base de datos:
 
-## Learning Laravel
+DELIMITER $$
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+DROP PROCEDURE IF EXISTS procesar_carga_masiva$$
+DROP PROCEDURE IF EXISTS obtener_personas_paginadas$$
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+CREATE PROCEDURE procesar_carga_masiva()
+BEGIN
+    DECLARE v_persona_id BIGINT;
+    DECLARE v_done INT DEFAULT 0;
+    DECLARE v_count INT;
 
-## Laravel Sponsors
+    WHILE v_done = 0 DO
+        SELECT COUNT(*) INTO v_count FROM datos_temp;
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+        IF v_count = 0 THEN
+            SET v_done = 1;
+        ELSE
+            SELECT id INTO v_persona_id
+            FROM (
+                SELECT p.id
+                FROM datos_temp dt
+                LEFT JOIN persona p
+                    ON p.nombre = dt.nombre
+                   AND p.paterno = dt.paterno
+                   AND (p.materno = dt.materno OR (p.materno IS NULL AND dt.materno IS NULL))
+                LIMIT 1
+            ) AS temp;
 
-### Premium Partners
+            IF v_persona_id IS NULL THEN
+                INSERT INTO persona (nombre, paterno, materno, created_at, updated_at)
+                SELECT nombre, paterno, materno, NOW(), NOW()
+                FROM datos_temp
+                LIMIT 1;
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+                SET v_persona_id = LAST_INSERT_ID();
+            END IF;
 
-## Contributing
+            INSERT IGNORE INTO telefono (persona_id, telefono, created_at, updated_at)
+            SELECT v_persona_id, telefono, NOW(), NOW()
+            FROM datos_temp
+            LIMIT 1;
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+            INSERT INTO direccion (
+                persona_id, calle, numero_exterior, numero_interior, colonia, cp, created_at, updated_at
+            )
+            SELECT
+                v_persona_id, calle, numero_exterior, numero_interior, colonia, cp, NOW(), NOW()
+            FROM datos_temp
+            LIMIT 1;
 
-## Code of Conduct
+            DELETE FROM datos_temp LIMIT 1;
+            SET v_persona_id = NULL;
+        END IF;
+    END WHILE;
+END$$
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+CREATE PROCEDURE obtener_personas_paginadas(IN p_offset INT, IN p_limit INT)
+BEGIN
+    SELECT
+        id,
+        nombre,
+        paterno,
+        materno,
+        CONCAT(nombre, ' ', paterno, ' ', IFNULL(materno, '')) AS nombre_completo,
+        created_at,
+        updated_at
+    FROM persona
+    ORDER BY id ASC
+    LIMIT p_offset, p_limit;
+END$$
 
-## Security Vulnerabilities
+DELIMITER ;
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+Ejecución:
 
-## License
+CALL procesar_carga_masiva();
+CALL obtener_personas_paginadas(0, 10);
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Crear usuario administrador (Laravel Tinker):
+
+php artisan tinker
+
+php\App\Models\User::create([
+    'name' => 'Administrador',
+    'email' => 'admin@admin.com',
+    'password' => bcrypt('admin123'),
+    'tipo_usuario' => 'admin'
+]);
