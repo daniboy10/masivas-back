@@ -1,6 +1,5 @@
 # Masivas Back (Laravel)
 
-Backend desarrollado en Laravel para una prueba técnica.
 Incluye lógica de base de datos mediante Stored Procedures en MySQL.
 
 Requisitos:
